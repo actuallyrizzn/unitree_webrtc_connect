@@ -15,7 +15,7 @@ from .multicast_scanner import discover_ip_sn
 # # Enable logging for debugging
 # logging.basicConfig(level=logging.INFO)
 
-class Go2WebRTCConnection:
+class UnitreeWebRTCConnection:
     def __init__(self, connectionMethod: WebRTCConnectionMethod, serialNumber=None, ip=None, username=None, password=None) -> None:
         self.pc = None
         self.sn = serialNumber

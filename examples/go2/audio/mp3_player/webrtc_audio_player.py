@@ -2,8 +2,8 @@ import logging
 import asyncio
 import os
 import json
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
-from go2_webrtc_driver.webrtc_audiohub import WebRTCAudioHub
+from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
+from src.webrtc_audiohub import WebRTCAudioHub
 
 # Enable logging for debugging
 logging.basicConfig(level=logging.ERROR)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 async def main():
     try:
         # Establish WebRTC connection
-        conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip="192.168.137.120")
+        conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip="192.168.137.120")
         await conn.connect()
         logger.info("WebRTC connection established")
 

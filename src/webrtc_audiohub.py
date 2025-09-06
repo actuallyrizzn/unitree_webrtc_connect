@@ -6,14 +6,14 @@ import uuid
 import os
 import hashlib
 from pydub import AudioSegment
-from go2_webrtc_driver.constants import AUDIO_API
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection
+from src.constants import AUDIO_API
+from src.webrtc_driver import UnitreeWebRTCConnection
 import asyncio
 
 CHUNK_SIZE = 61440
 
 class WebRTCAudioHub:
-    def __init__(self, connection: Go2WebRTCConnection, logger: logging.Logger = None):
+    def __init__(self, connection: UnitreeWebRTCConnection, logger: logging.Logger = None):
         self.logger = logger.getChild(self.__class__.__name__) if logger else logging.getLogger(self.__class__.__name__)
         self.conn = connection
         self.data_channel = None

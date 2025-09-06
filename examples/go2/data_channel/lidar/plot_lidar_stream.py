@@ -11,7 +11,7 @@ import csv
 import numpy as np
 from flask import Flask, render_template_string
 from flask_socketio import SocketIO
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
+from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 import argparse
 from datetime import datetime
 import os
@@ -130,9 +130,9 @@ async def lidar_webrtc_connection():
 
     while retry_attempts < MAX_RETRY_ATTEMPTS:
         try:
-            conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip="192.168.8.181")  # WebRTC IP
-            # _webrtc_connection = Go2WebRTCConnection(WebRTCConnectionMethod.Remote, serialNumber="B42D2000XXXXXXXX", username="email@gmail.com", password="pass")
-            # _webrtc_connection = Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)
+            conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip="192.168.8.181")  # WebRTC IP
+            # _webrtc_connection = UnitreeWebRTCConnection(WebRTCConnectionMethod.Remote, serialNumber="B42D2000XXXXXXXX", username="email@gmail.com", password="pass")
+            # _webrtc_connection = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalAP)
 
             # Connect to WebRTC
             logging.info("Connecting to WebRTC...")

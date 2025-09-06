@@ -3,7 +3,7 @@ import logging
 import wave
 import numpy as np
 import sys
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
+from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 
 # Enable logging for debugging
 logging.basicConfig(level=logging.FATAL)
@@ -50,10 +50,10 @@ async def recv_audio_stream(frame):
 async def main():
     try:
         # Choose a connection method (uncomment the correct one)
-        conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip="192.168.8.181")
-        # conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, serialNumber="B42D2000XXXXXXXX")
-        # conn = Go2WebRTCConnection(WebRTCConnectionMethod.Remote, serialNumber="B42D2000XXXXXXXX", username="email@gmail.com", password="pass")
-        # conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)
+        conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip="192.168.8.181")
+        # conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, serialNumber="B42D2000XXXXXXXX")
+        # conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.Remote, serialNumber="B42D2000XXXXXXXX", username="email@gmail.com", password="pass")
+        # conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalAP)
 
         # Connect to the device
         await conn.connect()
