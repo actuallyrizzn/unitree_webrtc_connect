@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from queue import Queue
-from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 from aiortc import MediaStreamTrack
 
 # Enable logging for debugging

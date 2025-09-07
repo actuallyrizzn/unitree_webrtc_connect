@@ -11,7 +11,7 @@ import csv
 import numpy as np
 from flask import Flask, render_template_string
 from flask_socketio import SocketIO
-from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 import argparse
 from datetime import datetime
 import os

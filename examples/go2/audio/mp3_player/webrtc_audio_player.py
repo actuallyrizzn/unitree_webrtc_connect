@@ -2,8 +2,8 @@ import logging
 import asyncio
 import os
 import json
-from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
-from src.webrtc_audiohub import WebRTCAudioHub
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
+from unitree_webrtc_connect.webrtc_audiohub import WebRTCAudioHub
 
 # Enable logging for debugging
 logging.basicConfig(level=logging.ERROR)

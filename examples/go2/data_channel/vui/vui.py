@@ -2,8 +2,8 @@ import asyncio
 import logging
 import json
 import sys
-from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
-from src.constants import RTC_TOPIC, VUI_COLOR
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
+from unitree_webrtc_connect.constants import RTC_TOPIC, VUI_COLOR
 
 # Enable logging for debugging
 logging.basicConfig(level=logging.FATAL)

@@ -6,8 +6,8 @@ import uuid
 import os
 import hashlib
 from pydub import AudioSegment
-from src.constants import AUDIO_API
-from src.webrtc_driver import UnitreeWebRTCConnection
+from unitree_webrtc_connect.constants import AUDIO_API
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection
 import asyncio
 
 CHUNK_SIZE = 61440

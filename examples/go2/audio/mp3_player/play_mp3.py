@@ -2,7 +2,7 @@ import logging
 import asyncio
 import os 
 import sys
-from src.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
+from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
 from aiortc.contrib.media import MediaPlayer
 
 

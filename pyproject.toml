@@ -31,7 +31,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["*"]
+include = ["unitree_webrtc_connect*"]
 exclude = [
     "tests",
     "tests.*",
@@ -41,6 +41,8 @@ exclude = [
     "examples.*",
     "__pycache__",
     "__pycache__.*",
+    "*.egg-info",
+    "*.egg-info.*",
 ]
 
 [tool.setuptools]
