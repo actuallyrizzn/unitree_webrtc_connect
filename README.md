@@ -7,7 +7,7 @@ This repository contains a Python implementation of the WebRTC driver to connect
 ## Currently Supported Firmware Versions
 
 **Go2:**
-- **1.1.x series**: 1.1.1 – 1.1.7 *(latest available)*
+- **1.1.x series**: 1.1.1 – 1.1.8 *(latest available)*
 - **1.0.x series**: 1.0.19 – 1.0.25
 
 **G1:**
