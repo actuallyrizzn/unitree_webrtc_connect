@@ -73,7 +73,7 @@ conn.datachannel.switchVideoChannel(True)
 ### LiDAR Payloads
 
 - Binary `bytes` messages are interpreted using a small header to distinguish LiDAR vs normal payload format.
-- Decoding is delegated to `UnifiedLidarDecoder` (see [LiDAR](./lidar.md)).
+- Decoding is delegated to `UnifiedLidarDecoder` (see [LiDAR](./07-lidar.md)).
 
 ### Errors
 

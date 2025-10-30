@@ -20,6 +20,6 @@ Supported connection modes:
 - Local STA (same LAN via IP or auto-discovery by serial): `WebRTCConnectionMethod.LocalSTA`
 - Remote (TURN via Unitree cloud): `WebRTCConnectionMethod.Remote`
 
-See [Architecture](./architecture.md) for flow diagrams and responsibilities, and [Examples](./examples.md) for runnable scripts.
+See [Architecture](./03-architecture.md) for flow diagrams and responsibilities, and [Examples](./09-examples.md) for runnable scripts.
 
 
