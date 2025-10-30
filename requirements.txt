@@ -1,0 +1,28 @@
+# WebRTC and media handling
+aiortc>=1.14.0
+
+# Cryptography
+pycryptodome
+
+# Video/image processing
+opencv-python
+numpy
+
+# Audio processing
+sounddevice
+pyaudio
+pydub
+
+# Web server (for examples)
+flask
+flask-socketio
+
+# Compression
+lz4
+
+# WASM runtime for LiDAR decoder
+wasmtime
+
+# HTTP requests
+requests
+
