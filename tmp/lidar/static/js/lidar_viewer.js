@@ -18,7 +18,7 @@ class LidarViewer {
         this.currentFps = 0;
         
         // Point cloud settings
-        this.pointSize = 5.0;  // Increased from 1.5 for better visibility
+        this.pointSize = 2.0;  // Adjusted for dense point clouds
         this.colorScheme = 'distance'; // 'distance', 'height', 'rainbow'
         
         this.init();

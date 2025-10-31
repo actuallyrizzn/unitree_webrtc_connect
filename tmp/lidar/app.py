@@ -69,8 +69,9 @@ socketio = SocketIO(app, async_mode='threading', cors_allowed_origins="*")
 # LiDAR processing parameters
 ROTATE_X_ANGLE = 0
 ROTATE_Z_ANGLE = 180
-minYValue = -1
-maxYValue = 4
+# Expanded Y-filter to capture more of the scene
+minYValue = -50  # Changed from -1 to -50
+maxYValue = 50   # Changed from 4 to 50
 
 # Stats tracking
 stats = {
@@ -294,9 +295,19 @@ async def lidar_webrtc_connection():
             if len(filtered_points) == 0:
                 return
             
-            # Now remove duplicates after filtering
-            unique_points = np.unique(filtered_points, axis=0)
-            _builtin_print(f"  After unique: {len(unique_points)} points")
+            # Skip unique() to see all points (can add back later if needed)
+            # unique_points = np.unique(filtered_points, axis=0)
+            # _builtin_print(f"  After unique: {len(unique_points)} points")
+            
+            # Use filtered points directly - downsample if too many
+            if len(filtered_points) > 100000:
+                # Downsample to ~100k points for performance
+                step = len(filtered_points) // 100000
+                unique_points = filtered_points[::step]
+                _builtin_print(f"  Downsampled: {len(filtered_points)} -> {len(unique_points)} points")
+            else:
+                unique_points = filtered_points
+                _builtin_print(f"  Using all {len(unique_points)} filtered points")
             
             # Calculate center
             center_x = float(np.mean(unique_points[:, 0]))
