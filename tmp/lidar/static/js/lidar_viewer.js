@@ -18,7 +18,7 @@ class LidarViewer {
         this.currentFps = 0;
         
         // Point cloud settings
-        this.pointSize = 2.0;  // Adjusted for dense point clouds
+        this.pointSize = 4.0;  // Increased for better visibility
         this.colorScheme = 'distance'; // 'distance', 'height', 'rainbow'
         
         this.init();
@@ -35,6 +35,9 @@ class LidarViewer {
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x1a1a1a);
         this.scene.fog = new THREE.Fog(0x1a1a1a, 50, 300);
+        
+        // Rotate scene -90 degrees around Y axis (matches original script)
+        this.scene.rotation.y = THREE.MathUtils.degToRad(-90);
         
         // Camera
         const container = document.getElementById('viewer');
@@ -141,8 +144,8 @@ class LidarViewer {
             const color = new THREE.Color();
             const normalized = distances[i] / maxDistance;
             
-            // Color gradient from blue (close) to red (far)
-            color.setHSL(0.6 - normalized * 0.6, 1.0, 0.5);
+            // Color gradient from blue (close) to red (far) with brighter colors
+            color.setHSL(0.6 - normalized * 0.6, 1.0, 0.7);  // Increased lightness from 0.5 to 0.7
             
             colors[i * 3] = color.r;
             colors[i * 3 + 1] = color.g;

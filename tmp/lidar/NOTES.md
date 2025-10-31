@@ -2,6 +2,13 @@
 
 ## Data Flow Analysis
 
+### Connection Stability (Fixed)
+
+**Keepalive Mechanism:**
+- Added `disableTrafficSaving(True)` call after connection
+- This enables proper keepalive/heartbeat to prevent random disconnections
+- The driver already has a 2-second heartbeat, this ensures it's active
+
 ### Current Status (After Latest Fixes)
 
 **Raw Data:**

@@ -66,18 +66,19 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = 'go2-lidar-viz-secret'
 socketio = SocketIO(app, async_mode='threading', cors_allowed_origins="*")
 
-# LiDAR processing parameters
-ROTATE_X_ANGLE = 0
-ROTATE_Z_ANGLE = 180
-# Expanded Y-filter to capture more of the scene
-minYValue = -50  # Changed from -1 to -50
-maxYValue = 50   # Changed from 4 to 50
+# LiDAR processing parameters (in radians!)
+ROTATE_X_ANGLE = np.pi / 2  # 90 degrees in radians
+ROTATE_Z_ANGLE = np.pi       # 180 degrees in radians
+# Y-filter (after rotation, Y is "up" - floor to ceiling)
+minYValue = 0    # Floor level
+maxYValue = 100  # Ceiling level
 
 # Stats tracking
 stats = {
     'messages_received': 0,
     'points_sent': 0,
-    'last_message_time': None
+    'last_message_time': None,
+    'frame_counter': 0,  # For throttling
 }
 
 # === Monkey patches for WebRTC connection ===
@@ -193,29 +194,28 @@ _webrtc_driver_mod.Go2WebRTCConnection.get_answer_from_local_peer = _patched_get
 # === LiDAR processing functions ===
 
 def rotate_points(points, x_angle, z_angle):
-    """Rotate point cloud by given angles."""
+    """Rotate point cloud by given angles (already in radians)."""
     if len(points) == 0:
         return points
     
-    x_rad = np.radians(x_angle)
-    z_rad = np.radians(z_angle)
-    
     # Rotation matrix around X-axis
-    Rx = np.array([
+    rotation_matrix_x = np.array([
         [1, 0, 0],
-        [0, np.cos(x_rad), -np.sin(x_rad)],
-        [0, np.sin(x_rad), np.cos(x_rad)]
+        [0, np.cos(x_angle), -np.sin(x_angle)],
+        [0, np.sin(x_angle), np.cos(x_angle)]
     ])
     
     # Rotation matrix around Z-axis
-    Rz = np.array([
-        [np.cos(z_rad), -np.sin(z_rad), 0],
-        [np.sin(z_rad), np.cos(z_rad), 0],
+    rotation_matrix_z = np.array([
+        [np.cos(z_angle), -np.sin(z_angle), 0],
+        [np.sin(z_angle), np.cos(z_angle), 0],
         [0, 0, 1]
     ])
     
     # Apply rotations
-    return np.dot(np.dot(points, Rx.T), Rz.T)
+    points = points @ rotation_matrix_x.T
+    points = points @ rotation_matrix_z.T
+    return points
 
 # === WebRTC Connection ===
 
@@ -236,6 +236,13 @@ async def lidar_webrtc_connection():
         import traceback
         traceback.print_exc()
         return
+    
+    # Disable traffic saving mode (helps keep connection alive)
+    try:
+        await conn.datachannel.disableTrafficSaving(True)
+        _builtin_print("Traffic saving disabled (keepalive enabled)")
+    except Exception as e:
+        _builtin_print(f"WARNING: Could not disable traffic saving: {e}")
     
     # Enable LiDAR
     conn.datachannel.pub_sub.publish_without_callback("rt/utlidar/switch", "on")
@@ -300,9 +307,9 @@ async def lidar_webrtc_connection():
             # _builtin_print(f"  After unique: {len(unique_points)} points")
             
             # Use filtered points directly - downsample if too many
-            if len(filtered_points) > 100000:
-                # Downsample to ~100k points for performance
-                step = len(filtered_points) // 100000
+            if len(filtered_points) > 15000:
+                # Downsample to ~15k points for performance
+                step = len(filtered_points) // 15000
                 unique_points = filtered_points[::step]
                 _builtin_print(f"  Downsampled: {len(filtered_points)} -> {len(unique_points)} points")
             else:
@@ -314,24 +321,30 @@ async def lidar_webrtc_connection():
             center_y = float(np.mean(unique_points[:, 1]))
             center_z = float(np.mean(unique_points[:, 2]))
             
-            # Calculate distances for coloring
-            distances = np.linalg.norm(unique_points - [center_x, center_y, center_z], axis=1)
+            # Offset points by center to position at origin (matches original script)
+            offset_points = unique_points - np.array([center_x, center_y, center_z])
             
-            # Emit to browser
-            try:
-                socketio.emit("lidar_data", {
-                    "points": unique_points.tolist(),
-                    "distances": distances.tolist(),
-                    "center": {"x": center_x, "y": center_y, "z": center_z},
-                    "stats": {
-                        "total_received": total_points,
-                        "after_filter": len(unique_points),
-                        "message_count": stats['messages_received']
-                    }
-                })
-                stats['points_sent'] += len(unique_points)
-            except Exception as emit_err:
-                _builtin_print(f"ERROR emitting socketio event: {emit_err}")
+            # Calculate distances for coloring (from origin after centering)
+            distances = np.linalg.norm(offset_points, axis=1)
+            
+            # Throttle: only emit every 2nd frame to reduce websocket load
+            stats['frame_counter'] += 1
+            if stats['frame_counter'] % 2 == 0:
+                # Emit to browser
+                try:
+                    socketio.emit("lidar_data", {
+                        "points": offset_points.tolist(),  # Send centered points
+                        "distances": distances.tolist(),
+                        "center": {"x": center_x, "y": center_y, "z": center_z},
+                        "stats": {
+                            "total_received": total_points,
+                            "after_filter": len(unique_points),
+                            "message_count": stats['messages_received']
+                        }
+                    })
+                    stats['points_sent'] += len(unique_points)
+                except Exception as emit_err:
+                    _builtin_print(f"ERROR emitting socketio event: {emit_err}")
                 
         except Exception as e:
             _builtin_print(f"ERROR in LIDAR callback: {e}")
@@ -408,9 +421,15 @@ if __name__ == "__main__":
     _builtin_print(f"\nServer will start at http://{args.host}:{args.port}/")
     _builtin_print("Make sure the Unitree Go2 mobile app is CLOSED\n")
     
-    # Start WebRTC connection in background thread
-    webrtc_thread = threading.Thread(target=start_webrtc, daemon=True)
-    webrtc_thread.start()
+    # Only start WebRTC in the reloader child process (not the parent watcher process)
+    import os
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        # This is the child process that actually runs the server
+        _builtin_print("Starting WebRTC connection thread...")
+        webrtc_thread = threading.Thread(target=start_webrtc, daemon=True)
+        webrtc_thread.start()
+    else:
+        _builtin_print("Parent reloader process - WebRTC will start in child process")
     
     # Start Flask server with auto-reload enabled
     socketio.run(app, host=args.host, port=args.port, debug=True, use_reloader=True, reloader_type='stat')
