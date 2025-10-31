@@ -101,8 +101,9 @@ class LidarViewer {
             this.updateStatus('disconnected', 'Disconnected: ' + reason);
         });
         
-        this.socket.on('lidar_data', (data) => {
-            this.updatePointCloud(data);
+        // Listen for BINARY lidar data (faster, more efficient)
+        this.socket.on('lidar_data_binary', (data) => {
+            this.updatePointCloudBinary(data);
         });
     }
     
@@ -112,15 +113,28 @@ class LidarViewer {
         statusEl.textContent = message;
     }
     
-    updatePointCloud(data) {
-        const points = data.points || [];
-        const distances = data.distances || [];
-        const stats = data.stats || {};
+    updatePointCloudBinary(data) {
+        // Parse binary data
+        const pointsBuffer = data.points;
+        const distancesBuffer = data.distances;
+        const metadata = data.metadata || {};
+        const stats = metadata.stats || {};
+        
+        if (!pointsBuffer || pointsBuffer.byteLength === 0) {
+            console.warn('Received empty point buffer');
+            return;
+        }
+        
+        // Convert binary buffers to Float32Arrays
+        const points = new Float32Array(pointsBuffer);
+        const distances = new Float32Array(distancesBuffer);
         
         if (points.length === 0) {
             console.warn('Received empty point array');
             return;
         }
+        
+        console.log(`Received ${points.length / 3} points (${(pointsBuffer.byteLength / 1024).toFixed(1)}KB binary)`);
         
         // Remove old point cloud
         if (this.pointCloud) {
@@ -132,9 +146,8 @@ class LidarViewer {
         // Create geometry
         const geometry = new THREE.BufferGeometry();
         
-        // Convert points to flat array
-        const vertices = new Float32Array(points.flat());
-        geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+        // Points are already a flat Float32Array - perfect for THREE.js
+        geometry.setAttribute('position', new THREE.BufferAttribute(points, 3));
         
         // Create colors based on distance
         const colors = new Float32Array(points.length * 3);

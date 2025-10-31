@@ -64,7 +64,16 @@ except OverflowError:
 # Flask app setup
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'go2-lidar-viz-secret'
-socketio = SocketIO(app, async_mode='threading', cors_allowed_origins="*")
+socketio = SocketIO(
+    app, 
+    async_mode='threading',
+    cors_allowed_origins="*",
+    ping_timeout=120,           # Longer timeout before considering client dead
+    ping_interval=25,            # Send keepalive pings every 25s
+    max_http_buffer_size=10000000,  # 10MB buffer (default is 1MB)
+    engineio_logger=False,       # Reduce logging overhead
+    logger=False
+)
 
 # LiDAR processing parameters (in radians!)
 ROTATE_X_ANGLE = np.pi / 2  # 90 degrees in radians
@@ -330,17 +339,29 @@ async def lidar_webrtc_connection():
             # Throttle: only emit every 2nd frame to reduce websocket load
             stats['frame_counter'] += 1
             if stats['frame_counter'] % 2 == 0:
-                # Emit to browser
+                # Emit to browser using BINARY format for efficiency
                 try:
-                    socketio.emit("lidar_data", {
-                        "points": offset_points.tolist(),  # Send centered points
-                        "distances": distances.tolist(),
+                    # Convert to binary (much faster and smaller than JSON)
+                    # Format: float32 arrays
+                    points_binary = offset_points.astype(np.float32).tobytes()
+                    distances_binary = distances.astype(np.float32).tobytes()
+                    
+                    # Metadata as small JSON
+                    metadata = {
+                        "point_count": len(unique_points),
                         "center": {"x": center_x, "y": center_y, "z": center_z},
                         "stats": {
                             "total_received": total_points,
                             "after_filter": len(unique_points),
                             "message_count": stats['messages_received']
                         }
+                    }
+                    
+                    # Send binary data with metadata
+                    socketio.emit("lidar_data_binary", {
+                        "points": points_binary,
+                        "distances": distances_binary,
+                        "metadata": metadata
                     })
                     stats['points_sent'] += len(unique_points)
                 except Exception as emit_err:
