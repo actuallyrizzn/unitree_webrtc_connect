@@ -1,5 +1,9 @@
 # WebRTC and media handling
 aiortc>=1.14.0
+aioice
+
+# Version handling
+packaging
 
 # Cryptography
 pycryptodome

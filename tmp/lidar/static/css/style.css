@@ -1,0 +1,151 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #1a1a1a;
+    color: #ffffff;
+    overflow: hidden;
+}
+
+#viewer {
+    width: 100vw;
+    height: 100vh;
+}
+
+#info-panel {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    min-width: 280px;
+    z-index: 1000;
+}
+
+#info-panel h1 {
+    font-size: 24px;
+    margin-bottom: 15px;
+    color: #00d4ff;
+    font-weight: 600;
+}
+
+#status {
+    padding: 10px 15px;
+    border-radius: 6px;
+    margin-bottom: 15px;
+    font-weight: 500;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+#status.connecting {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffc107;
+    border: 1px solid #ffc107;
+}
+
+#status.connected {
+    background: rgba(76, 175, 80, 0.2);
+    color: #4caf50;
+    border: 1px solid #4caf50;
+}
+
+#status.disconnected {
+    background: rgba(244, 67, 54, 0.2);
+    color: #f44336;
+    border: 1px solid #f44336;
+}
+
+#stats {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 15px;
+}
+
+.stat-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.stat-item:last-child {
+    border-bottom: none;
+}
+
+.stat-label {
+    color: #999;
+    font-size: 14px;
+}
+
+.stat-item span:last-child {
+    color: #00d4ff;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+#controls {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 15px;
+    border-radius: 8px;
+}
+
+#controls h3 {
+    font-size: 16px;
+    margin-bottom: 10px;
+    color: #00d4ff;
+}
+
+#controls p {
+    font-size: 13px;
+    color: #ccc;
+    margin: 6px 0;
+}
+
+#controls strong {
+    color: #fff;
+    min-width: 70px;
+    display: inline-block;
+}
+
+/* Animation for status pulse */
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.7;
+    }
+}
+
+#status.connected {
+    animation: pulse 2s infinite;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.3);
+}
+
