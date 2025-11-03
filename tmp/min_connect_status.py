@@ -96,10 +96,19 @@ def _rewrite_sdp_to_legacy(sdp: str) -> str:
     saw_sctpmap = False
     for line in sdp.splitlines():
         if line.startswith("m=application"):
-            lines.append("m=application 9 DTLS/SCTP 5000")
+            # Preserve port but use legacy DTLS/SCTP format
+            parts = line.split()
+            port = parts[1] if len(parts) > 1 else "9"
+            # Handle both "UDP/DTLS/SCTP" and "DTLS/SCTP" formats
+            lines.append(f"m=application {port} UDP/DTLS/SCTP 5000")
             saw_m_application = True
         elif line.startswith("a=sctp-port"):
+            # Replace RFC 8841 sctp-port with legacy sctpmap
             lines.append("a=sctpmap:5000 webrtc-datachannel 65535")
+            saw_sctpmap = True
+        elif line.startswith("a=sctpmap"):
+            # Already in legacy format, keep it
+            lines.append(line)
             saw_sctpmap = True
         else:
             lines.append(line)
@@ -113,25 +122,42 @@ def _patched_send_sdp(ip, sdp):
     try:
         payload = json.loads(sdp)
         offer_sdp = payload.get("sdp", "")
+        _builtin_print(f"\n=== OFFER (before rewrite) ===")
+        for line in offer_sdp.splitlines():
+            if line.startswith("m=") or line.startswith("a=sctp"):
+                _builtin_print(f"  {line}")
         # Remove sha-384 and sha-512 fingerprints (forces Go2 to use sha-256)
         filtered = [
             line for line in offer_sdp.splitlines()
             if not line.startswith("a=fingerprint:sha-384")
             and not line.startswith("a=fingerprint:sha-512")
         ]
-        payload["sdp"] = _rewrite_sdp_to_legacy("\r\n".join(filtered) + "\r\n")
+        rewritten_offer = _rewrite_sdp_to_legacy("\r\n".join(filtered) + "\r\n")
+        _builtin_print(f"\n=== OFFER (after rewrite) ===")
+        for line in rewritten_offer.splitlines():
+            if line.startswith("m=") or line.startswith("a=sctp"):
+                _builtin_print(f"  {line}")
+        _builtin_print()
+        payload["sdp"] = rewritten_offer
         sdp = json.dumps(payload)
     except Exception:
         pass
     result = _orig_send_local(ip, sdp)
     if result:
         try:
-            # Rewrite remote answer to legacy format
+            # Log the answer but DON'T rewrite it - use as-is
             answer = json.loads(result)
-            answer["sdp"] = _rewrite_sdp_to_legacy(answer.get("sdp", ""))
-            result = json.dumps(answer)
-        except Exception:
-            pass
+            original_sdp = answer.get("sdp", "")
+            _builtin_print(f"\n=== REMOTE ANSWER (NOT rewriting) ===")
+            for line in original_sdp.splitlines():
+                if line.startswith("m=") or line.startswith("a=sctp"):
+                    _builtin_print(f"  {line}")
+            _builtin_print()
+            # Return the answer AS-IS, no rewriting
+            # answer["sdp"] = _rewrite_sdp_to_legacy(original_sdp)
+            # result = json.dumps(answer)
+        except Exception as e:
+            _builtin_print(f"ERROR logging answer SDP: {e}")
     return result
 
 

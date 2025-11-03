@@ -43,6 +43,7 @@ import json
 import csv
 import argparse
 import threading
+import time
 import numpy as np
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO
@@ -336,36 +337,48 @@ async def lidar_webrtc_connection():
             # Calculate distances for coloring (from origin after centering)
             distances = np.linalg.norm(offset_points, axis=1)
             
-            # Throttle: only emit every 2nd frame to reduce websocket load
+            # Send EVERY frame (no throttling) - let's see what the real bottleneck is
             stats['frame_counter'] += 1
-            if stats['frame_counter'] % 2 == 0:
-                # Emit to browser using BINARY format for efficiency
-                try:
-                    # Convert to binary (much faster and smaller than JSON)
-                    # Format: float32 arrays
-                    points_binary = offset_points.astype(np.float32).tobytes()
-                    distances_binary = distances.astype(np.float32).tobytes()
+            
+            # Emit to browser using BINARY format for efficiency
+            try:
+                import time
+                emit_start = time.perf_counter()
+                
+                # Convert to binary (much faster and smaller than JSON)
+                # Format: float32 arrays
+                points_binary = offset_points.astype(np.float32).tobytes()
+                distances_binary = distances.astype(np.float32).tobytes()
+                
+                # Metadata as small JSON
+                metadata = {
+                    "point_count": len(unique_points),
+                    "center": {"x": center_x, "y": center_y, "z": center_z},
+                    "stats": {
+                        "total_received": total_points,
+                        "after_filter": len(unique_points),
+                        "message_count": stats['messages_received']
+                    },
+                    "timestamp": time.time()  # Add timestamp to measure lag
+                }
+                
+                # Send binary data with metadata
+                socketio.emit("lidar_data_binary", {
+                    "points": points_binary,
+                    "distances": distances_binary,
+                    "metadata": metadata
+                })
+                
+                emit_time = (time.perf_counter() - emit_start) * 1000
+                if stats['messages_received'] % 20 == 0:  # Log every 20 messages
+                    payload_kb = (len(points_binary) + len(distances_binary)) / 1024
+                    _builtin_print(f"  Emit: {emit_time:.1f}ms, Payload: {payload_kb:.1f}KB")
                     
-                    # Metadata as small JSON
-                    metadata = {
-                        "point_count": len(unique_points),
-                        "center": {"x": center_x, "y": center_y, "z": center_z},
-                        "stats": {
-                            "total_received": total_points,
-                            "after_filter": len(unique_points),
-                            "message_count": stats['messages_received']
-                        }
-                    }
-                    
-                    # Send binary data with metadata
-                    socketio.emit("lidar_data_binary", {
-                        "points": points_binary,
-                        "distances": distances_binary,
-                        "metadata": metadata
-                    })
-                    stats['points_sent'] += len(unique_points)
-                except Exception as emit_err:
-                    _builtin_print(f"ERROR emitting socketio event: {emit_err}")
+                stats['points_sent'] += len(unique_points)
+            except Exception as emit_err:
+                _builtin_print(f"ERROR emitting socketio event: {emit_err}")
+                import traceback
+                traceback.print_exc()
                 
         except Exception as e:
             _builtin_print(f"ERROR in LIDAR callback: {e}")
@@ -382,21 +395,37 @@ async def lidar_webrtc_connection():
     _builtin_print("Subscribed to rt/utlidar/voxel_map_compressed")
     _builtin_print("View visualization at http://127.0.0.1:8080/")
     
-    # Keep connection alive
+    # Keep connection alive with monitoring
+    connection_start_time = asyncio.get_event_loop().time()
     try:
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)  # Check every 5 seconds
+            
+            # Check if still connected
             if not conn.isConnected:
-                _builtin_print("WARNING: Connection lost")
-                break
+                uptime = asyncio.get_event_loop().time() - connection_start_time
+                _builtin_print(f"Connection lost after {uptime:.1f}s uptime")
+                raise ConnectionError("WebRTC connection lost")
+            
+            # Log uptime every 30 seconds
+            uptime = asyncio.get_event_loop().time() - connection_start_time
+            if int(uptime) % 30 == 0 and uptime > 0:
+                _builtin_print(f"Connection stable: {uptime:.0f}s, {stats['messages_received']} messages")
+                
     except asyncio.CancelledError:
         _builtin_print("Connection cancelled")
         raise
     finally:
         try:
-            await conn.disconnect()
-        except Exception:
-            pass
+            _builtin_print("Closing WebRTC connection...")
+            # Use timeout to prevent hanging
+            await asyncio.wait_for(conn.disconnect(), timeout=5.0)
+            _builtin_print("WebRTC connection closed")
+        except asyncio.TimeoutError:
+            _builtin_print("WARNING: Disconnect timed out after 5s (forcing cleanup)")
+        except Exception as e:
+            _builtin_print(f"WARNING: Error during disconnect: {e}")
+        # Always continue to allow reconnect
 
 # === Flask Routes ===
 
@@ -419,15 +448,53 @@ def handle_disconnect():
     _builtin_print("Browser client disconnected")
 
 def start_webrtc():
-    """Run WebRTC connection in a separate asyncio loop."""
+    """Run WebRTC connection with auto-reconnect in a separate asyncio loop."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    try:
-        loop.run_until_complete(lidar_webrtc_connection())
-    except KeyboardInterrupt:
-        pass
-    finally:
-        loop.close()
+    
+    retry_count = 0
+    consecutive_fast_failures = 0
+    
+    while True:  # Infinite retry loop
+        connection_start = time.time()
+        try:
+            _builtin_print(f"\n{'='*60}")
+            _builtin_print(f"WebRTC Connection Attempt #{retry_count + 1}")
+            _builtin_print(f"{'='*60}")
+            loop.run_until_complete(lidar_webrtc_connection())
+            # If we get here, connection ended gracefully
+            retry_count = 0  # Reset on clean exit
+            consecutive_fast_failures = 0
+        except KeyboardInterrupt:
+            _builtin_print("\nKeyboard interrupt - shutting down gracefully...")
+            break
+        except Exception as e:
+            connection_duration = time.time() - connection_start
+            retry_count += 1
+            
+            # Track fast failures (< 10 seconds)
+            if connection_duration < 10:
+                consecutive_fast_failures += 1
+            else:
+                consecutive_fast_failures = 0  # Reset if we lasted a while
+            
+            # Calculate backoff
+            if consecutive_fast_failures > 3:
+                # If failing quickly multiple times, use longer backoff
+                reconnect_delay = min(30, 10 * consecutive_fast_failures)
+                _builtin_print(f"WARNING: {consecutive_fast_failures} fast failures detected")
+            else:
+                reconnect_delay = min(retry_count * 2, 30)
+            
+            _builtin_print(f"Connection failed after {connection_duration:.1f}s: {e}")
+            _builtin_print(f"Reconnecting in {reconnect_delay}s... (attempt #{retry_count})")
+            
+            # Sleep before retry
+            time.sleep(reconnect_delay)
+    
+    _builtin_print("Closing event loop...")
+    loop.close()
+    _builtin_print("WebRTC thread exited")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Go2 LiDAR Visualization Server")

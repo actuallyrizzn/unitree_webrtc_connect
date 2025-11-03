@@ -120,6 +120,11 @@ class LidarViewer {
         const metadata = data.metadata || {};
         const stats = metadata.stats || {};
         
+        // Measure lag
+        const now = Date.now() / 1000;
+        const serverTime = metadata.timestamp || now;
+        const lag = (now - serverTime) * 1000;  // Convert to ms
+        
         if (!pointsBuffer || pointsBuffer.byteLength === 0) {
             console.warn('Received empty point buffer');
             return;
@@ -134,7 +139,11 @@ class LidarViewer {
             return;
         }
         
-        console.log(`Received ${points.length / 3} points (${(pointsBuffer.byteLength / 1024).toFixed(1)}KB binary)`);
+        // Log every 20 frames
+        if (stats.message_count % 20 === 0) {
+            const payloadKB = (pointsBuffer.byteLength + distancesBuffer.byteLength) / 1024;
+            console.log(`Msg ${stats.message_count}: ${points.length / 3} pts, ${payloadKB.toFixed(1)}KB, LAG: ${lag.toFixed(0)}ms`);
+        }
         
         // Remove old point cloud
         if (this.pointCloud) {
