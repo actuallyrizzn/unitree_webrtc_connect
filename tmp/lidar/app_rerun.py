@@ -28,9 +28,20 @@ import time
 import numpy as np
 import rerun as rr
 import signal
+import atexit
+import socket
 
 # Global shutdown flag
 _shutdown_requested = False
+
+def is_port_in_use(port, host='127.0.0.1'):
+    """Check if a port is already in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind((host, port))
+            return False
+        except OSError:
+            return True
 
 # Remove emojis for Windows terminal
 _builtin_print = _builtins.print
@@ -208,7 +219,7 @@ stats = {
     'last_message_time': None,
 }
 
-async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file=None, shutdown_event=None):
+async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file=None, state=None):
     """
     Establish WebRTC connection and process LiDAR data.
     
@@ -216,8 +227,11 @@ async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file
         enable_viz: If True, log to Rerun for visualization
         ai_callback: Optional callback(points) for AI processing
         record_file: Optional file path to record to
-        shutdown_event: asyncio.Event to signal shutdown
+        state: Dict with 'rerun_initialized' flag to track Rerun server state
     """
+    if state is None:
+        state = {'rerun_initialized': False}
+    
     _builtin_print("=" * 60)
     _builtin_print("Initializing Go2 LiDAR WebRTC Connection")
     _builtin_print("=" * 60)
@@ -234,22 +248,35 @@ async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file
         traceback.print_exc()
         raise
     
-    # NOW initialize Rerun after successful WebRTC connection
-    if enable_viz:
-        if record_file:
+    # Initialize Rerun ONLY on first connection
+    # Also check if ports are already in use (from previous auto-reload)
+    rerun_ports_in_use = is_port_in_use(9090) or is_port_in_use(9876)
+    
+    if enable_viz and not state['rerun_initialized']:
+        if rerun_ports_in_use:
+            _builtin_print("\n" + "="*60)
+            _builtin_print("RERUN SERVERS ALREADY RUNNING (from previous session)")
+            _builtin_print("="*60)
+            _builtin_print("Web Viewer: http://localhost:9090")
+            _builtin_print("gRPC Server: rerun+http://127.0.0.1:9876/proxy")
+            _builtin_print("Skipping Rerun initialization...")
+            _builtin_print("="*60 + "\n")
+        elif record_file:
             rr.init("go2_lidar", recording_id="go2_session")
             rr.save(record_file)
             _builtin_print(f"Recording to: {record_file}")
         else:
             # Initialize recording stream first
             rec = rr.init("go2_lidar", spawn=False)
-            # Serve web viewer with the recording stream
-            rr.serve_web(open_browser=True, web_port=9090, grpc_port=9876, recording=rec)
+            # Serve gRPC server and web viewer separately (new API)
+            server_uri = rr.serve_grpc(grpc_port=9876, recording=rec)
+            rr.serve_web_viewer(web_port=9090, open_browser=True, connect_to=server_uri)
             _builtin_print("\n" + "="*60)
             _builtin_print("RERUN WEB VIEWER STARTED")
             _builtin_print("="*60)
             _builtin_print("Web Viewer: http://localhost:9090")
-            _builtin_print("Full URL:   http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy")
+            _builtin_print("gRPC Server: " + server_uri)
+            _builtin_print("Full URL:   http://localhost:9090/?url=" + server_uri.replace(':', '%3A').replace('/', '%2F'))
             _builtin_print("="*60 + "\n")
         
         # Set up coordinate system
@@ -260,10 +287,13 @@ async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file
             "lidar",
             rr.Transform3D(
                 translation=[0, 0, 0],
-                from_parent=False
+                relation=rr.TransformRelation.ChildFromParent
             ),
             static=True
         )
+        
+        # Mark as initialized immediately after Rerun setup (modifies dict in-place)
+        state['rerun_initialized'] = True
     
     # Disable traffic saving mode (keepalive)
     try:
@@ -284,6 +314,10 @@ async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file
     async def lidar_callback_task(message):
         """Process incoming LiDAR messages."""
         try:
+            # Check shutdown flag first
+            if _shutdown_requested:
+                return
+            
             stats['messages_received'] += 1
             stats['last_message_time'] = time.time()
             
@@ -406,21 +440,56 @@ async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file
         _builtin_print("If not, run: rerun")
         _builtin_print("Controls: Mouse drag to rotate, scroll to zoom\n")
     
-    # Keep connection alive with monitoring
+    # Keep connection alive with monitoring and active keepalive
     connection_start_time = asyncio.get_event_loop().time()
+    last_keepalive = time.time()
+    last_message_check = time.time()
     try:
-        while True:
-            await asyncio.sleep(5)
+        while not _shutdown_requested:
+            await asyncio.sleep(1)  # Check more frequently for shutdown
             
-            if not conn.isConnected:
+            # Check connection status with protection against hanging
+            try:
+                is_connected = conn.isConnected
+                pc_state = conn.pc.connectionState if hasattr(conn, 'pc') and conn.pc else 'unknown'
+            except Exception as e:
+                _builtin_print(f"WARNING: Error checking connection status: {e}")
+                is_connected = False
+                pc_state = 'error'
+            
+            # Also check if we've stopped receiving messages (connection might be dead)
+            current_time = time.time()
+            if stats.get('last_message_time'):
+                time_since_last_msg = current_time - stats['last_message_time']
+                if time_since_last_msg > 10:  # No messages for 10 seconds = dead connection
+                    _builtin_print(f"WARNING: No LiDAR messages for {time_since_last_msg:.1f}s")
+                    is_connected = False
+            
+            if not is_connected or pc_state in ['closed', 'failed', 'disconnected']:
                 uptime = asyncio.get_event_loop().time() - connection_start_time
-                _builtin_print(f"Connection lost after {uptime:.1f}s uptime")
+                _builtin_print(f"Connection lost after {uptime:.1f}s uptime (state: {pc_state})")
                 raise ConnectionError("WebRTC connection lost")
+            
+            # Send active keepalive every 20 seconds by toggling traffic saving
+            # This ensures the data channel stays active
+            current_time = time.time()
+            if current_time - last_keepalive >= 20:
+                try:
+                    await conn.datachannel.disableTrafficSaving(True)
+                    last_keepalive = current_time
+                    uptime = asyncio.get_event_loop().time() - connection_start_time
+                    _builtin_print(f"Sent keepalive at {uptime:.0f}s")
+                except Exception as e:
+                    _builtin_print(f"WARNING: Keepalive failed: {e}")
             
             # Log uptime every 30 seconds
             uptime = asyncio.get_event_loop().time() - connection_start_time
             if int(uptime) % 30 == 0 and uptime > 0:
                 _builtin_print(f"Connection stable: {uptime:.0f}s, {stats['messages_received']} messages")
+        
+        # Shutdown requested
+        if _shutdown_requested:
+            _builtin_print("Shutdown flag detected, exiting connection loop...")
                 
     except asyncio.CancelledError:
         _builtin_print("Connection cancelled")
@@ -428,10 +497,18 @@ async def lidar_webrtc_connection(enable_viz=True, ai_callback=None, record_file
     finally:
         try:
             _builtin_print("Closing WebRTC connection...")
-            await asyncio.wait_for(conn.disconnect(), timeout=5.0)
-            _builtin_print("WebRTC connection closed")
-        except asyncio.TimeoutError:
-            _builtin_print("WARNING: Disconnect timed out after 5s (forcing cleanup)")
+            # Try to disconnect with short timeout
+            try:
+                await asyncio.wait_for(conn.disconnect(), timeout=2.0)
+                _builtin_print("WebRTC connection closed")
+            except asyncio.TimeoutError:
+                _builtin_print("WARNING: Disconnect timed out after 2s (forcing cleanup)")
+                # Force close by setting connection state
+                try:
+                    if hasattr(conn, 'pc') and conn.pc:
+                        await asyncio.wait_for(conn.pc.close(), timeout=1.0)
+                except:
+                    pass
         except Exception as e:
             _builtin_print(f"WARNING: Error during disconnect: {e}")
 
@@ -442,6 +519,8 @@ def start_webrtc(enable_viz=True, ai_callback=None, record_file=None):
     
     retry_count = 0
     consecutive_fast_failures = 0
+    # Use a dict to track state across function calls (mutable object)
+    state = {'rerun_initialized': False}
     
     while not _shutdown_requested:
         connection_start = time.time()
@@ -449,7 +528,7 @@ def start_webrtc(enable_viz=True, ai_callback=None, record_file=None):
             _builtin_print(f"\n{'='*60}")
             _builtin_print(f"WebRTC Connection Attempt #{retry_count + 1}")
             _builtin_print(f"{'='*60}")
-            loop.run_until_complete(lidar_webrtc_connection(enable_viz, ai_callback, record_file))
+            loop.run_until_complete(lidar_webrtc_connection(enable_viz, ai_callback, record_file, state))
             retry_count = 0
             consecutive_fast_failures = 0
         except KeyboardInterrupt:
@@ -491,10 +570,11 @@ def start_webrtc(enable_viz=True, ai_callback=None, record_file=None):
 def signal_handler(signum, frame):
     """Handle Ctrl+C gracefully"""
     global _shutdown_requested
-    _builtin_print("\n" + "="*60)
-    _builtin_print("SHUTDOWN REQUESTED - Cleaning up...")
-    _builtin_print("="*60)
-    _shutdown_requested = True
+    if not _shutdown_requested:  # Only print once
+        _builtin_print("\n" + "="*60)
+        _builtin_print("SHUTDOWN REQUESTED - Cleaning up...")
+        _builtin_print("="*60)
+        _shutdown_requested = True
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Go2 LiDAR Visualization with Rerun")
@@ -532,17 +612,23 @@ if __name__ == "__main__":
         class ReloadHandler(FileSystemEventHandler):
             def __init__(self):
                 self.should_reload = False
-                self.last_modified = time.time()
+                self.last_modified = 0
             
             def on_modified(self, event):
-                if event.src_path.endswith('.py') and time.time() - self.last_modified > 1:
-                    self.last_modified = time.time()
-                    _builtin_print(f"\n{'='*60}")
-                    _builtin_print(f"FILE CHANGED: {os.path.basename(event.src_path)}")
-                    _builtin_print(f"Restarting...")
-                    _builtin_print(f"{'='*60}\n")
-                    self.should_reload = True
-                    signal_handler(None, None)
+                if event.src_path.endswith('.py'):
+                    current_time = time.time()
+                    # Debounce: only trigger once per 2 seconds
+                    if current_time - self.last_modified > 2:
+                        self.last_modified = current_time
+                        if not self.should_reload:  # Only trigger once
+                            _builtin_print(f"\n{'='*60}")
+                            _builtin_print(f"FILE CHANGED: {os.path.basename(event.src_path)}")
+                            _builtin_print(f"Restarting...")
+                            _builtin_print(f"{'='*60}\n")
+                            self.should_reload = True
+                            # Don't call signal_handler - just set flag
+                            global _shutdown_requested
+                            _shutdown_requested = True
         
         reload_handler = ReloadHandler()
         observer = Observer()
@@ -551,7 +637,10 @@ if __name__ == "__main__":
         
         def run_with_reload():
             global _shutdown_requested
-            while not _shutdown_requested:
+            keyboard_interrupt = False
+            
+            while True:
+                # Reset flags for this iteration
                 _shutdown_requested = False
                 reload_handler.should_reload = False
                 
@@ -562,12 +651,17 @@ if __name__ == "__main__":
                         record_file=args.record if hasattr(args, 'record') else None
                     )
                 except KeyboardInterrupt:
+                    keyboard_interrupt = True
                     break
                 
-                if not reload_handler.should_reload or _shutdown_requested:
+                # Check if we should restart or exit
+                if keyboard_interrupt or not reload_handler.should_reload:
+                    # User hit Ctrl+C or connection ended without reload request
                     break
                 
-                time.sleep(1)  # Brief pause before reload
+                # If we get here, it's a reload - wait a moment then restart
+                _builtin_print("Waiting 2s before restart...\n")
+                time.sleep(2)
             
             observer.stop()
             observer.join()
@@ -584,4 +678,10 @@ if __name__ == "__main__":
             )
         except KeyboardInterrupt:
             _builtin_print("\nShutdown complete")
+    
+    # Force exit to terminate any lingering threads (Rerun web server, etc.)
+    # Use os._exit(0) instead of sys.exit(0) to immediately terminate
+    # all threads without waiting for cleanup
+    _builtin_print("Forcing process exit...")
+    os._exit(0)
 
