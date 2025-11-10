@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Animus - Go2 LiDAR Visualization</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    
+    <!-- Three.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <!-- Socket.IO -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+</head>
+<body>
+    <div id="info-panel">
+        <h1>Animus - Go2 LiDAR</h1>
+        <div id="status" class="status connecting">Connecting...</div>
+        <div id="stats">
+            <div class="stat-item">
+                <span class="stat-label">Messages:</span>
+                <span id="stat-messages">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Points:</span>
+                <span id="stat-points">0</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">FPS:</span>
+                <span id="stat-fps">0</span>
+            </div>
+        </div>
+        <div id="controls">
+            <h3>Controls</h3>
+            <p><strong>Rotate:</strong> Left mouse drag</p>
+            <p><strong>Pan:</strong> Right mouse drag</p>
+            <p><strong>Zoom:</strong> Mouse wheel</p>
+        </div>
+    </div>
+    
+    <div id="viewer"></div>
+    
+    <script src="{{ url_for('static', filename='js/lidar_viewer.js') }}"></script>
+</body>
+</html>
+
