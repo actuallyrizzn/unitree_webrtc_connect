@@ -199,82 +199,60 @@ _webrtc_driver_mod.Go2WebRTCConnection.get_answer_from_local_peer = _patched_get
 
 
 async def get_robot_state(conn):
-    """Get the current robot state (standing/sitting) by subscribing to sport mode state."""
+    """Get the current robot state (standing/crouched) by subscribing to sportmodestate.
+    
+    Note: GetState (1034) and GetBodyHeight (1024) APIs don't work reliably,
+    so we subscribe to LF_SPORT_MOD_STATE topic and extract body_height from one message.
+    """
     state_received = asyncio.Event()
-    current_mode = None
-    full_message = None
+    body_height = None
     
     def sportmodestate_callback(message):
-        nonlocal current_mode, full_message
+        nonlocal body_height
         try:
-            # The message structure is: message['data'] contains the sport mode state
+            # Extract body_height from the message - that's all we need
             state_data = message.get('data', {})
-            mode = state_data.get('mode', None)
             body_height = state_data.get('body_height', None)
-            current_mode = mode
-            full_message = message
-            _builtin_print(f"Received sport mode state: mode={mode}, body_height={body_height}")
-            state_received.set()
+            if body_height is not None:
+                state_received.set()
         except Exception as e:
             _builtin_print(f"Error parsing sport mode state: {e}")
-            import traceback
-            traceback.print_exc()
             state_received.set()
     
     try:
-        # Subscribe to sport mode state
+        # Subscribe, wait for one message with body_height, then unsubscribe
         conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LF_SPORT_MOD_STATE'], sportmodestate_callback)
+        await asyncio.sleep(0.3)  # Brief delay for subscription to register
         
-        # Give the subscription a moment to register
-        await asyncio.sleep(0.5)
-        
-        # Wait for a state message (with timeout)
         try:
-            await asyncio.wait_for(state_received.wait(), timeout=5.0)
+            await asyncio.wait_for(state_received.wait(), timeout=3.0)
         except asyncio.TimeoutError:
             _builtin_print("Warning: Timeout waiting for sport mode state")
+            body_height = None
+        finally:
+            # Always unsubscribe
             try:
                 conn.datachannel.pub_sub.unsubscribe(RTC_TOPIC['LF_SPORT_MOD_STATE'], sportmodestate_callback)
             except:
                 pass
+        
+        if body_height is None:
             return None
         
-        # Unsubscribe
-        try:
-            conn.datachannel.pub_sub.unsubscribe(RTC_TOPIC['LF_SPORT_MOD_STATE'], sportmodestate_callback)
-        except:
-            pass
-        
-        # Check robot mode and body height
-        # From actual data: body_height around 0.24 = sitting, standing would be higher
-        # Use body_height as primary indicator
-        state_data = full_message.get('data', {}) if full_message else {}
-        body_height = state_data.get('body_height', None)
-        
-        # Based on observed data: body_height ~0.24 = crouched (StandDown)
-        # Standing would have higher body_height (likely 0.3+)
-        if body_height is not None:
-            # Use body_height as primary indicator
-            # Crouched is around 0.24, standing is higher (0.3+)
-            is_standing = body_height > 0.27  # Standing is higher than crouched
-            is_sitting = body_height <= 0.27  # Crouched (StandDown)
-        else:
-            # Fallback to mode if body_height not available
-            # Mode 0 might mean sitting based on observations
-            is_standing = current_mode != 0
-            is_sitting = current_mode == 0
-        
+        # Based on observed data:
+        # - body_height ~0.074 = crouched (StandDown, flush with floor)
+        # - body_height ~0.315 = standing
+        # Use threshold of 0.15 to distinguish
+        is_standing = body_height > 0.15
+        is_crouched = body_height <= 0.15
         
         return {
-            'mode': current_mode,
+            'body_height': body_height,
             'is_standing': is_standing,
-            'is_sitting': is_sitting,
-            'full_message': full_message
+            'is_sitting': is_crouched
         }
     except Exception as e:
         _builtin_print(f"Warning: Could not get robot state: {e}")
-        import traceback
-        traceback.print_exc()
         return None
 
 
@@ -325,11 +303,11 @@ async def main():
             import traceback
             traceback.print_exc()
     else:
-        mode = state['mode']
+        body_height = state.get('body_height', None)
         is_standing = state['is_standing']
         is_sitting = state['is_sitting']
         
-        print(f"\nCurrent state - Mode: {mode}, Standing: {is_standing}, Sitting: {is_sitting}")
+        print(f"\nCurrent state - Body Height: {body_height}, Standing: {is_standing}, Crouched: {is_sitting}")
         
         # Toggle based on current state
         if is_standing:
@@ -348,7 +326,7 @@ async def main():
                 print("\nVerifying state change...")
                 new_state = await get_robot_state(conn)
                 if new_state:
-                    print(f"New state - Mode: {new_state['mode']}, Standing: {new_state['is_standing']}, Sitting: {new_state['is_sitting']}")
+                    print(f"New state - Body Height: {new_state.get('body_height', 'N/A')}, Standing: {new_state['is_standing']}, Crouched: {new_state['is_sitting']}")
             except Exception as e:
                 print(f"✗ Sit command failed: {e}")
                 import traceback
@@ -369,13 +347,13 @@ async def main():
                 print("\nVerifying state change...")
                 new_state = await get_robot_state(conn)
                 if new_state:
-                    print(f"New state - Mode: {new_state['mode']}, Standing: {new_state['is_standing']}, Sitting: {new_state['is_sitting']}")
+                    print(f"New state - Body Height: {new_state.get('body_height', 'N/A')}, Standing: {new_state['is_standing']}, Crouched: {new_state['is_sitting']}")
             except Exception as e:
                 print(f"✗ StandUp command failed: {e}")
                 import traceback
                 traceback.print_exc()
         else:
-            print(f"\n>>> Unknown state (mode: {mode}). Attempting to stand up...")
+            print(f"\n>>> Unknown state. Attempting to stand up...")
             try:
                 response = await conn.datachannel.pub_sub.publish_request_new(
                     RTC_TOPIC["SPORT_MOD"],
