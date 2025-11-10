@@ -492,6 +492,13 @@ def signal_handler(signum, frame):
         _builtin_print("SHUTDOWN REQUESTED - Cleaning up...")
         _builtin_print("="*60)
         _shutdown_requested = True
+        # Force immediate exit after a brief delay for cleanup messages
+        import threading
+        def force_exit():
+            time.sleep(1)  # Give threads a moment to see shutdown flag
+            _builtin_print("Forcing process exit...")
+            os._exit(0)
+        threading.Thread(target=force_exit, daemon=True).start()
 
 def start_webrtc():
     """Run WebRTC connection with auto-reconnect in a separate asyncio loop."""
@@ -572,11 +579,20 @@ if __name__ == "__main__":
     
     # Start Flask server with auto-reload enabled
     try:
-        socketio.run(app, host=args.host, port=args.port, debug=True, use_reloader=True, reloader_type='stat')
+        # Use allow_unsafe_werkzeug to avoid warnings, and set stop_timeout for faster shutdown
+        socketio.run(
+            app, 
+            host=args.host, 
+            port=args.port, 
+            debug=True, 
+            use_reloader=True, 
+            reloader_type='stat',
+            allow_unsafe_werkzeug=True
+        )
     except KeyboardInterrupt:
-        _builtin_print("\nShutdown complete")
+        _builtin_print("\nKeyboard interrupt - shutting down...")
     finally:
-        # Force exit to terminate any lingering threads
+        # Force immediate exit - don't wait for Flask cleanup
         _builtin_print("Forcing process exit...")
         os._exit(0)
 
