@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go2 Video Stream</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Unitree Go2 Video Stream</h1>
+
+        <div class="status-panel">
+            <h2>Connection Status</h2>
+            <div class="status-item">
+                <span class="label">State:</span>
+                <span id="connection-state" class="value">Disconnected</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Uptime:</span>
+                <span id="uptime" class="value">0s</span>
+            </div>
+        </div>
+
+        <div class="stats-panel">
+            <h2>Video Statistics</h2>
+            <div class="status-item">
+                <span class="label">Frames Received:</span>
+                <span id="frames-received" class="value">0</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Frames Sent:</span>
+                <span id="frames-sent" class="value">0</span>
+            </div>
+            <div class="status-item">
+                <span class="label">FPS:</span>
+                <span id="fps" class="value">0.0</span>
+            </div>
+        </div>
+
+        <div class="video-container">
+            <h2>Live Video Feed</h2>
+            <canvas id="video-canvas" width="640" height="480"></canvas>
+            <div id="no-video-message">
+                <p>Waiting for video stream...</p>
+                <p>Make sure the Go2 robot is powered on and in AP mode.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/video_viewer.js') }}"></script>
+</body>
+</html>
