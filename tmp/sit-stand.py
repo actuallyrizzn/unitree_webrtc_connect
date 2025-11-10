@@ -1,15 +1,11 @@
 """
-Minimal Go2 WebRTC Connection Test Script
-==========================================
+Go2 Sit/Stand Toggle Script
+============================
 
-This script demonstrates a basic working WebRTC connection to the Unitree Go2 robot
-in AP mode, including:
-- Connection establishment
-- Data channel validation
-- Sending a simple command (wave)
+This script toggles the Unitree Go2 robot between sitting and standing modes.
 
 Usage:
-    python tmp/min_connect_status.py
+    python tmp/sit-stand.py
 
 Prerequisites:
     - Go2 robot in AP mode
@@ -202,12 +198,93 @@ async def _patched_get_answer_from_local_peer(self, pc, ip):
 _webrtc_driver_mod.Go2WebRTCConnection.get_answer_from_local_peer = _patched_get_answer_from_local_peer
 
 
+async def get_robot_state(conn):
+    """Get the current robot state (standing/sitting) by subscribing to sport mode state."""
+    state_received = asyncio.Event()
+    current_mode = None
+    full_message = None
+    
+    def sportmodestate_callback(message):
+        nonlocal current_mode, full_message
+        try:
+            # The message structure is: message['data'] contains the sport mode state
+            state_data = message.get('data', {})
+            mode = state_data.get('mode', None)
+            body_height = state_data.get('body_height', None)
+            current_mode = mode
+            full_message = message
+            _builtin_print(f"Received sport mode state: mode={mode}, body_height={body_height}")
+            state_received.set()
+        except Exception as e:
+            _builtin_print(f"Error parsing sport mode state: {e}")
+            import traceback
+            traceback.print_exc()
+            state_received.set()
+    
+    try:
+        # Subscribe to sport mode state
+        conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LF_SPORT_MOD_STATE'], sportmodestate_callback)
+        
+        # Give the subscription a moment to register
+        await asyncio.sleep(0.5)
+        
+        # Wait for a state message (with timeout)
+        try:
+            await asyncio.wait_for(state_received.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            _builtin_print("Warning: Timeout waiting for sport mode state")
+            try:
+                conn.datachannel.pub_sub.unsubscribe(RTC_TOPIC['LF_SPORT_MOD_STATE'], sportmodestate_callback)
+            except:
+                pass
+            return None
+        
+        # Unsubscribe
+        try:
+            conn.datachannel.pub_sub.unsubscribe(RTC_TOPIC['LF_SPORT_MOD_STATE'], sportmodestate_callback)
+        except:
+            pass
+        
+        # Check robot mode and body height
+        # From actual data: body_height around 0.24 = sitting, standing would be higher
+        # Use body_height as primary indicator
+        state_data = full_message.get('data', {}) if full_message else {}
+        body_height = state_data.get('body_height', None)
+        
+        # Based on observed data: body_height ~0.24 = crouched (StandDown)
+        # Standing would have higher body_height (likely 0.3+)
+        if body_height is not None:
+            # Use body_height as primary indicator
+            # Crouched is around 0.24, standing is higher (0.3+)
+            is_standing = body_height > 0.27  # Standing is higher than crouched
+            is_sitting = body_height <= 0.27  # Crouched (StandDown)
+        else:
+            # Fallback to mode if body_height not available
+            # Mode 0 might mean sitting based on observations
+            is_standing = current_mode != 0
+            is_sitting = current_mode == 0
+        
+        
+        return {
+            'mode': current_mode,
+            'is_standing': is_standing,
+            'is_sitting': is_sitting,
+            'full_message': full_message
+        }
+    except Exception as e:
+        _builtin_print(f"Warning: Could not get robot state: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+
 async def main():
-    """Main test function."""
+    """Main function to toggle between sit and stand."""
     logging.basicConfig(level=logging.INFO)
+    logging.getLogger("aiortc").setLevel(logging.WARNING)
 
     print("============================================================")
-    print("GO2 MINIMAL CONNECT + WAVE TEST")
+    print("GO2 SIT/STAND TOGGLE")
     print("============================================================")
     print("Direct AP mode: 192.168.12.1")
     print("\nIMPORTANT: Make sure the Unitree Go2 mobile app is CLOSED")
@@ -221,77 +298,100 @@ async def main():
         print("\n✓ Connection established!\n")
     except asyncio.TimeoutError:
         print("ERROR: Connection timed out after 60s")
-        _dump_connection_state(conn)
         await _safe_disconnect(conn)
         sys.exit(1)
     except Exception as e:
         print(f"ERROR: Connection failed: {e}")
-        _dump_connection_state(conn)
         await _safe_disconnect(conn)
         raise
 
-    _dump_connection_state(conn)
-
-    # Check if robot is standing, and stand it up if needed
-    print("Checking robot state...")
-    try:
-        # Get current state
-        state_response = await conn.datachannel.pub_sub.publish_request_new(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": SPORT_CMD["GetState"]}
-        )
-        state_data = state_response.get('data', {}).get('data', {})
-        
-        # Parse the state - the response might be a string that needs JSON parsing
-        if isinstance(state_data, str):
-            try:
-                state_data = json.loads(state_data)
-            except:
-                pass
-        
-        # Check if robot is standing (mode 1 typically means standing)
-        # If we can't determine, we'll just try to stand up anyway
-        mode = state_data.get('mode', None) if isinstance(state_data, dict) else None
-        is_standing = mode == 1 or mode == 2  # 1=stand, 2=balance_stand
-        
-        if is_standing:
-            print(f"✓ Robot is already standing (mode: {mode})")
-        else:
-            print(f"Robot is not standing (mode: {mode}), standing up...")
-            stand_response = await conn.datachannel.pub_sub.publish_request_new(
-                RTC_TOPIC["SPORT_MOD"],
-                {"api_id": SPORT_CMD["StandUp"]}
-            )
-            stand_status = stand_response.get('data', {}).get('header', {}).get('status', {})
-            print(f"StandUp command response: {stand_status}")
-            print("Waiting 3 seconds for robot to stand...")
-            await asyncio.sleep(3)
-    except Exception as e:
-        print(f"Warning: Could not check/change robot state: {e}")
-        print("Attempting to stand up anyway...")
+    # Get current state
+    print("Checking current robot state...")
+    state = await get_robot_state(conn)
+    
+    if state is None:
+        print("Could not determine current state. Attempting to stand up...")
         try:
-            await conn.datachannel.pub_sub.publish_request_new(
+            response = await conn.datachannel.pub_sub.publish_request_new(
                 RTC_TOPIC["SPORT_MOD"],
                 {"api_id": SPORT_CMD["StandUp"]}
             )
-            await asyncio.sleep(3)
-        except:
-            pass
-
-    print("\nAttempting to send wave command...")
-    try:
-        response = await conn.datachannel.pub_sub.publish_request_new(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": SPORT_CMD["Hello"]}
-        )
-        print(f"✓ Wave command successful! Response: {response.get('data', {}).get('header', {}).get('status', {})}\n")
-    except Exception as e:
-        print(f"✗ Wave command failed: {e}")
-        import traceback
-        traceback.print_exc()
+            status = response.get('data', {}).get('header', {}).get('status', {})
+            print(f"StandUp command sent. Response: {status}")
+            print("Waiting 5 seconds...")
+            await asyncio.sleep(5)
+        except Exception as e:
+            print(f"Error sending StandUp command: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        mode = state['mode']
+        is_standing = state['is_standing']
+        is_sitting = state['is_sitting']
+        
+        print(f"\nCurrent state - Mode: {mode}, Standing: {is_standing}, Sitting: {is_sitting}")
+        
+        # Toggle based on current state
+        if is_standing:
+            print("\n>>> Robot is standing. Switching to crouch mode...")
+            try:
+                response = await conn.datachannel.pub_sub.publish_request_new(
+                    RTC_TOPIC["SPORT_MOD"],
+                    {"api_id": SPORT_CMD["StandDown"]}
+                )
+                status = response.get('data', {}).get('header', {}).get('status', {})
+                print(f"✓ StandDown (crouch) command sent. Response: {status}")
+                print("Waiting 5 seconds for robot to crouch...")
+                await asyncio.sleep(5)
+                
+                # Verify the state changed
+                print("\nVerifying state change...")
+                new_state = await get_robot_state(conn)
+                if new_state:
+                    print(f"New state - Mode: {new_state['mode']}, Standing: {new_state['is_standing']}, Sitting: {new_state['is_sitting']}")
+            except Exception as e:
+                print(f"✗ Sit command failed: {e}")
+                import traceback
+                traceback.print_exc()
+        elif is_sitting:
+            print("\n>>> Robot is crouched. Standing up...")
+            try:
+                response = await conn.datachannel.pub_sub.publish_request_new(
+                    RTC_TOPIC["SPORT_MOD"],
+                    {"api_id": SPORT_CMD["StandUp"]}
+                )
+                status = response.get('data', {}).get('header', {}).get('status', {})
+                print(f"✓ StandUp command sent. Response: {status}")
+                print("Waiting 5 seconds for robot to stand...")
+                await asyncio.sleep(5)
+                
+                # Verify the state changed
+                print("\nVerifying state change...")
+                new_state = await get_robot_state(conn)
+                if new_state:
+                    print(f"New state - Mode: {new_state['mode']}, Standing: {new_state['is_standing']}, Sitting: {new_state['is_sitting']}")
+            except Exception as e:
+                print(f"✗ StandUp command failed: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print(f"\n>>> Unknown state (mode: {mode}). Attempting to stand up...")
+            try:
+                response = await conn.datachannel.pub_sub.publish_request_new(
+                    RTC_TOPIC["SPORT_MOD"],
+                    {"api_id": SPORT_CMD["StandUp"]}
+                )
+                status = response.get('data', {}).get('header', {}).get('status', {})
+                print(f"StandUp command sent. Response: {status}")
+                print("Waiting 5 seconds...")
+                await asyncio.sleep(5)
+            except Exception as e:
+                print(f"Error sending StandUp command: {e}")
+                import traceback
+                traceback.print_exc()
 
     await _safe_disconnect(conn)
-    print("Done.")
+    print("\nDone.")
 
 
 async def _safe_disconnect(conn):
@@ -301,40 +401,6 @@ async def _safe_disconnect(conn):
             await conn.disconnect()
     except Exception:
         pass
-
-
-def _dump_connection_state(conn):
-    """Print connection state for debugging."""
-    try:
-        pc = getattr(conn, "pc", None)
-        if not pc:
-            return
-        
-        print("Connection State:")
-        print(f"  Peer Connection: {getattr(pc, 'connectionState', 'unknown')}")
-        print(f"  ICE Connection: {getattr(pc, 'iceConnectionState', 'unknown')}")
-        
-        sctp = getattr(pc, "sctp", None)
-        if sctp:
-            print(f"  SCTP Transport: {getattr(sctp.transport, 'state', 'unknown')}")
-            print(f"  SCTP Association: {getattr(sctp, '_association_state', 'unknown')}")
-        
-        # Show SDP application section
-        ld = getattr(pc, "localDescription", None)
-        rd = getattr(pc, "remoteDescription", None)
-        if ld:
-            print("\nLocal SDP (application section):")
-            for line in ld.sdp.splitlines():
-                if line.startswith("m=application") or "sctp" in line.lower():
-                    print(f"    {line}")
-        if rd:
-            print("Remote SDP (application section):")
-            for line in rd.sdp.splitlines():
-                if line.startswith("m=application") or "sctp" in line.lower():
-                    print(f"    {line}")
-        print()
-    except Exception as e:
-        print(f"Could not dump connection state: {e}\n")
 
 
 if __name__ == "__main__":
