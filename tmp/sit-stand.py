@@ -268,20 +268,118 @@ async def main():
     print("\nIMPORTANT: Make sure the Unitree Go2 mobile app is CLOSED")
     print("           The Go2 can only handle one WebRTC connection.\n")
 
-    conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)
+    # Flag to track if we detected the background task error
+    connection_error_detected = {"value": False}
 
-    try:
-        print("Connecting (timeout: 60s)...")
-        await asyncio.wait_for(conn.connect(), timeout=60.0)
-        print("\n✓ Connection established!\n")
-    except asyncio.TimeoutError:
-        print("ERROR: Connection timed out after 60s")
-        await _safe_disconnect(conn)
+    # Set up exception handler to catch background task errors
+    def exception_handler(loop, context):
+        """Handle unhandled exceptions in background tasks."""
+        exception = context.get('exception')
+        if exception and isinstance(exception, AttributeError):
+            msg = str(exception)
+            if "'NoneType' object has no attribute 'media'" in msg:
+                # This is the known intermittent error - log as warning and set flag
+                _builtin_print(f"WARNING: Intermittent connection error detected (background task): {msg}")
+                _builtin_print("         This usually indicates a stale connection. Retrying...")
+                connection_error_detected["value"] = True
+                return  # Don't propagate, we'll handle via retry logic
+        # For other exceptions, use default handler
+        loop.default_exception_handler(context)
+
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(exception_handler)
+
+    conn = None
+    max_attempts = 3
+    last_error = None
+
+    for attempt in range(1, max_attempts + 1):
+        conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)
+        try:
+            print(f"Connecting (attempt {attempt}/{max_attempts}, timeout: 60s)...")
+            # Reset flag before connecting
+            connection_error_detected["value"] = False
+            
+            # Wrap connect() with error monitoring
+            async def connect_with_monitoring():
+                connect_task = asyncio.create_task(conn.connect())
+                # Monitor for errors while connecting
+                while not connect_task.done():
+                    if connection_error_detected["value"]:
+                        connect_task.cancel()
+                        raise RuntimeError("Background task error detected during connect - stale connection")
+                    await asyncio.sleep(0.05)  # Check every 50ms
+                return await connect_task
+            
+            await asyncio.wait_for(connect_with_monitoring(), timeout=60.0)
+            
+            # IMMEDIATELY check if error was detected during connect
+            if connection_error_detected["value"]:
+                raise RuntimeError("Background task error detected during connect - stale connection")
+
+            # Quick validation - check connection state with aggressive timeout
+            pc = getattr(conn, "pc", None)
+            if not pc:
+                raise RuntimeError("Peer connection not created")
+            
+            # Poll for connected state, but bail immediately if error flag is set
+            start_time = asyncio.get_event_loop().time()
+            while True:
+                # Check error flag FIRST - highest priority
+                if connection_error_detected["value"]:
+                    raise RuntimeError("Background task error detected - stale connection")
+                
+                # Check connection state
+                state = getattr(pc, "connectionState", None)
+                if state == "connected":
+                    # Verify we have remote description
+                    if pc.remoteDescription:
+                        break  # Success!
+                    else:
+                        raise RuntimeError("Connected but no remote description")
+                
+                if state in {"failed", "disconnected", "closed"}:
+                    raise RuntimeError(f"Connection state is {state} - cannot proceed")
+                
+                # Timeout after 2 seconds
+                if asyncio.get_event_loop().time() - start_time > 2.0:
+                    raise RuntimeError("Connection state not progressing to 'connected' - possible stale connection")
+                
+                await asyncio.sleep(0.05)  # Check every 50ms
+
+            print("\n✓ Connection established!\n")
+            last_error = None
+            break
+        except asyncio.TimeoutError as exc:
+            print("ERROR: Connection timed out after 60s")
+            last_error = exc
+        except (RuntimeError, AttributeError) as exc:
+            # Catch the specific error pattern
+            if "'NoneType' object has no attribute 'media'" in str(exc):
+                print(f"WARNING: Intermittent connection error (attempt {attempt}): stale connection detected")
+                print("         This usually means another connection is still active. Retrying...")
+            else:
+                print(f"ERROR: Connection failed (attempt {attempt}): {exc}")
+            last_error = exc
+        except Exception as exc:
+            print(f"ERROR: Connection failed (attempt {attempt}): {exc}")
+            last_error = exc
+        finally:
+            if last_error is not None:
+                await _safe_disconnect(conn)
+                # Reset error flag for next attempt
+                connection_error_detected["value"] = False
+
+        if attempt < max_attempts:
+            print("Retrying connection...")
+            await asyncio.sleep(1.0)
+    else:
+        # Exhausted retries
+        if last_error:
+            print(f"Failed to connect after {max_attempts} attempts: {last_error}")
+        else:
+            print(f"Failed to connect after {max_attempts} attempts.")
         sys.exit(1)
-    except Exception as e:
-        print(f"ERROR: Connection failed: {e}")
-        await _safe_disconnect(conn)
-        raise
 
     # Get current state
     print("Checking current robot state...")
@@ -379,6 +477,35 @@ async def _safe_disconnect(conn):
             await conn.disconnect()
     except Exception:
         pass
+
+
+async def _wait_for_peer_connected(conn):
+    """Wait for the RTCPeerConnection to reach the 'connected' state."""
+    pc = getattr(conn, "pc", None)
+    if not pc:
+        raise RuntimeError("Peer connection not created.")
+
+    while True:
+        state = getattr(pc, "connectionState", None)
+        if state == "connected":
+            return
+        if state in {"failed", "disconnected", "closed"}:
+            raise RuntimeError(f"Peer connection state is '{state}'.")
+        await asyncio.sleep(0.2)
+
+
+async def _ensure_remote_description(conn):
+    """Wait until the RTCPeerConnection has a remote description."""
+    pc = getattr(conn, "pc", None)
+    if not pc:
+        raise RuntimeError("Peer connection not created.")
+
+    while getattr(pc, "remoteDescription", None) is None:
+        state = getattr(pc, "connectionState", None)
+        if state in {"failed", "disconnected", "closed"}:
+            raise RuntimeError(f"Remote description missing (state: {state}).")
+        await asyncio.sleep(0.2)
+    return
 
 
 if __name__ == "__main__":

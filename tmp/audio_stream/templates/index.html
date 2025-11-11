@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go2 Audio Stream</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <h1>Unitree Go2 Audio Stream</h1>
+
+        <div class="control-panel">
+            <p>Audio playback requires a user interaction. Click the button below to start the audio stream.</p>
+            <button id="start-audio" class="primary">Start Audio</button>
+            <span id="audio-status" class="status-message">Audio context not initialized.</span>
+        </div>
+
+        <div class="status-panel">
+            <h2>Connection Status</h2>
+            <div class="status-item">
+                <span class="label">State:</span>
+                <span id="connection-state" class="value disconnected">Disconnected</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Uptime:</span>
+                <span id="uptime" class="value">0s</span>
+            </div>
+        </div>
+
+        <div class="stats-panel">
+            <h2>Audio Statistics</h2>
+            <div class="status-item">
+                <span class="label">Chunks Received:</span>
+                <span id="chunks-received" class="value">0</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Chunks Sent:</span>
+                <span id="chunks-sent" class="value">0</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Sample Rate:</span>
+                <span id="sample-rate" class="value">—</span>
+            </div>
+            <div class="status-item">
+                <span class="label">Channels:</span>
+                <span id="channels" class="value">—</span>
+            </div>
+        </div>
+
+        <div class="log-panel">
+            <h2>Stream Activity</h2>
+            <div id="log-output" class="log-output">
+                <p>Waiting for audio stream...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='js/audio_player.js') }}"></script>
+</body>
+</html>

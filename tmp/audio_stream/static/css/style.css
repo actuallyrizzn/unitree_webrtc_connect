@@ -1,0 +1,160 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: linear-gradient(135deg, #1d976c 0%, #93f9b9 100%);
+    min-height: 100vh;
+    color: #2c3e50;
+}
+
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 16px;
+    padding: 30px;
+    box-shadow: 0 25px 45px rgba(0, 0, 0, 0.15);
+}
+
+h1 {
+    text-align: center;
+    color: #1d976c;
+    margin-bottom: 30px;
+    font-size: 2.4em;
+    font-weight: 400;
+}
+
+h2 {
+    color: #34495e;
+    border-bottom: 2px solid #1d976c;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+    font-size: 1.4em;
+    font-weight: 500;
+}
+
+.control-panel {
+    background: #f4fdf8;
+    border-left: 4px solid #1d976c;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 30px;
+}
+
+.primary {
+    background: #1d976c;
+    border: none;
+    color: #fff;
+    padding: 12px 24px;
+    font-size: 1em;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.primary:disabled {
+    background: #7fbba1;
+    cursor: not-allowed;
+}
+
+.primary:hover:not(:disabled) {
+    background: #147553;
+}
+
+.status-message {
+    display: inline-block;
+    margin-left: 20px;
+    font-style: italic;
+    color: #6c757d;
+}
+
+.status-panel, .stats-panel, .log-panel {
+    background: #f8f9fa;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 25px;
+    border-left: 4px solid #46b487;
+}
+
+.status-panel {
+    border-left-color: #e67e22;
+}
+
+.log-panel {
+    border-left-color: #2980b9;
+}
+
+.status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    padding: 8px 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.status-item:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+}
+
+.label {
+    font-weight: 600;
+    color: #2c3e50;
+}
+
+.value {
+    font-family: 'Courier New', monospace;
+    background: #ecf0f1;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+
+.value.connected {
+    color: #1d976c;
+}
+
+.value.disconnected {
+    color: #c0392b;
+}
+
+.log-output {
+    background: #1f2933;
+    color: #f8f9fa;
+    border-radius: 10px;
+    padding: 20px;
+    min-height: 120px;
+    max-height: 220px;
+    overflow-y: auto;
+    font-family: 'Courier New', monospace;
+    font-size: 0.95em;
+    line-height: 1.5;
+}
+
+.log-output p {
+    margin: 0 0 8px;
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding: 20px;
+        margin: 10px;
+    }
+
+    h1 {
+        font-size: 2em;
+    }
+
+    .status-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+
+    .status-message {
+        display: block;
+        margin-left: 0;
+        margin-top: 10px;
+    }
+}

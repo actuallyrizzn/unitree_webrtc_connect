@@ -275,6 +275,111 @@ await conn.datachannel.disableTrafficSaving(True)
 
 ---
 
+### 11. Intermittent Connection Error: `'NoneType' object has no attribute 'media'`
+
+**Problem:**
+- During WebRTC connection establishment, background tasks in `aiortc` can raise `AttributeError("'NoneType' object has no attribute 'media'")`
+- This occurs when the remote description is not fully set up but background tasks try to access media attributes
+- The error happens asynchronously in background tasks, so it doesn't propagate to the main `connect()` call
+- The connection appears to hang because `connect()` returns successfully, but the connection is actually in a failed state
+- This is often caused by stale connections (previous connection not fully cleaned up) or race conditions during SDP exchange
+
+**Symptoms:**
+- Connection appears to establish (ICE completes, `connect()` returns)
+- Warning logged: `WARNING: Intermittent connection error detected (background task): 'NoneType' object has no attribute 'media'`
+- Script hangs waiting for connection state to reach "connected"
+- Connection state remains in "connecting" indefinitely
+
+**Workaround:**
+Implement a multi-layered error detection and recovery mechanism:
+
+1. **Asyncio Exception Handler** - Catch the error in background tasks:
+```python
+connection_error_detected = {"value": False}
+
+def exception_handler(loop, context):
+    exception = context.get('exception')
+    if exception and isinstance(exception, AttributeError):
+        msg = str(exception)
+        if "'NoneType' object has no attribute 'media'" in msg:
+            connection_error_detected["value"] = True
+            # Log as warning, don't propagate
+            return
+    loop.default_exception_handler(context)
+
+loop = asyncio.get_event_loop()
+loop.set_exception_handler(exception_handler)
+```
+
+2. **Monitor During Connect** - Check error flag while `connect()` is running:
+```python
+async def connect_with_monitoring():
+    connect_task = asyncio.create_task(conn.connect())
+    while not connect_task.done():
+        if connection_error_detected["value"]:
+            connect_task.cancel()
+            raise RuntimeError("Background task error detected - stale connection")
+        await asyncio.sleep(0.05)  # Check every 50ms
+    return await connect_task
+
+await asyncio.wait_for(connect_with_monitoring(), timeout=60.0)
+```
+
+3. **Aggressive State Validation** - Poll connection state with error checking:
+```python
+start_time = asyncio.get_event_loop().time()
+while True:
+    # Check error flag FIRST - highest priority
+    if connection_error_detected["value"]:
+        raise RuntimeError("Background task error detected - stale connection")
+    
+    state = pc.connectionState
+    if state == "connected" and pc.remoteDescription:
+        break  # Success!
+    if state in {"failed", "disconnected", "closed"}:
+        raise RuntimeError(f"Connection state is {state}")
+    
+    if asyncio.get_event_loop().time() - start_time > 2.0:
+        raise RuntimeError("Connection state not progressing")
+    
+    await asyncio.sleep(0.05)  # Check every 50ms
+```
+
+4. **Retry Loop** - Automatically retry on error detection:
+```python
+for attempt in range(1, max_attempts + 1):
+    connection_error_detected["value"] = False
+    try:
+        # ... connection logic with monitoring ...
+    except RuntimeError as exc:
+        if "Background task error" in str(exc):
+            # Retry immediately
+            await asyncio.sleep(1.0)
+            continue
+    finally:
+        if last_error:
+            await _safe_disconnect(conn)
+            connection_error_detected["value"] = False
+```
+
+**Files affected:**
+- `tmp/sit-stand.py` - Full implementation with 3-attempt retry loop
+- Should be applied to all connection scripts for robustness
+
+**Key Insights:**
+- The error occurs in background tasks, so it must be caught via exception handler
+- `connect()` can return "successfully" even when the error has occurred
+- Connection state validation must check the error flag, not just connection state
+- Error detection should happen within 50-100ms to prevent hanging
+- Retry mechanism should disconnect and reset the error flag between attempts
+
+**Evidence:**
+- `tmp/sit-stand.py` lines 271-364: Complete implementation
+- Terminal output shows warning logged, then immediate retry without hanging
+- User feedback: "Perfect. It's almost undetectable now in the datastream" and "the retry goes by so fast it's hard to even visually catch it"
+
+---
+
 ## Summary of Broken/Unreliable Features
 
 | Feature | Status | Workaround |
@@ -288,6 +393,7 @@ await conn.datachannel.disableTrafficSaving(True)
 | Emoji output | ⚠️ Windows issues | Strip emojis |
 | Connection monitoring | ⚠️ Limited | Implement custom checks |
 | Keepalive | ⚠️ Missing | Periodic `disableTrafficSaving()` |
+| Intermittent `NoneType.media` error | ⚠️ Background task failure | Exception handler + monitoring + retry |
 
 ## Working Features
 
@@ -308,6 +414,7 @@ These features work reliably without workarounds:
 3. **Implement connection monitoring** - Library doesn't detect dead connections
 4. **Add keepalive** - Prevents silent disconnections
 5. **Handle Windows-specific issues** - Emoji stripping, CSV limits
+6. **Implement error detection and retry** - Background task errors can cause hangs without proper handling
 
 ## Future Considerations
 
