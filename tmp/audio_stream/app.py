@@ -252,30 +252,152 @@ async def run_webrtc_connection():
     """Run the WebRTC connection in a separate thread."""
     global _shutdown_requested
 
+    # Flag to track if we detected the background task error
+    connection_error_detected = {"value": False}
+
+    # Set up exception handler to catch background task errors
+    def exception_handler(loop, context):
+        """Handle unhandled exceptions in background tasks."""
+        exception = context.get('exception')
+        if exception and isinstance(exception, AttributeError):
+            msg = str(exception)
+            if "'NoneType' object has no attribute 'media'" in msg:
+                # This is the known intermittent error - log as warning and set flag
+                _builtin_print(f"WARNING: Intermittent connection error detected (background task): {msg}")
+                _builtin_print("         This usually indicates a stale connection. Retrying...")
+                connection_error_detected["value"] = True
+                return  # Don't propagate, we'll handle via retry logic
+        # For other exceptions, use default handler
+        loop.default_exception_handler(context)
+
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(exception_handler)
+
     while not _shutdown_requested:
         conn = None
+        max_attempts = 3
+        last_error = None
+
+        for attempt in range(1, max_attempts + 1):
+            if _shutdown_requested:
+                break
+
+            try:
+                _builtin_print(f"Starting WebRTC connection (attempt {attempt}/{max_attempts})...")
+
+                conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)
+                
+                # Reset flag before connecting
+                connection_error_detected["value"] = False
+                
+                # Wrap connect() with error monitoring
+                async def connect_with_monitoring():
+                    connect_task = asyncio.create_task(conn.connect())
+                    # Monitor for errors while connecting
+                    while not connect_task.done():
+                        if connection_error_detected["value"]:
+                            connect_task.cancel()
+                            raise RuntimeError("Background task error detected during connect - stale connection")
+                        await asyncio.sleep(0.05)  # Check every 50ms
+                    return await connect_task
+                
+                await asyncio.wait_for(connect_with_monitoring(), timeout=60.0)
+                
+                # IMMEDIATELY check if error was detected during connect
+                if connection_error_detected["value"]:
+                    raise RuntimeError("Background task error detected during connect - stale connection")
+
+                # Quick validation - check connection state with aggressive timeout
+                pc = getattr(conn, "pc", None)
+                if not pc:
+                    raise RuntimeError("Peer connection not created")
+                
+                # Poll for connected state, but bail immediately if error flag is set
+                start_time = asyncio.get_event_loop().time()
+                while True:
+                    # Check error flag FIRST - highest priority
+                    if connection_error_detected["value"]:
+                        raise RuntimeError("Background task error detected - stale connection")
+                    
+                    # Check connection state
+                    state = getattr(pc, "connectionState", None)
+                    if state == "connected":
+                        # Verify we have remote description
+                        if pc.remoteDescription:
+                            break  # Success!
+                        else:
+                            raise RuntimeError("Connected but no remote description")
+                    
+                    if state in {"failed", "disconnected", "closed"}:
+                        raise RuntimeError(f"Connection state is {state} - cannot proceed")
+                    
+                    # Timeout after 2 seconds
+                    if asyncio.get_event_loop().time() - start_time > 2.0:
+                        raise RuntimeError("Connection state not progressing to 'connected' - possible stale connection")
+                    
+                    await asyncio.sleep(0.05)  # Check every 50ms
+
+                _builtin_print("✓ Connection established!")
+
+                stats['connection_state'] = 'connected'
+                stats['start_time'] = time.time()
+
+                if getattr(conn, "audio", None):
+                    conn.audio.add_track_callback(audio_track_handler)
+                    _builtin_print("✓ Audio track handler registered")
+                    _builtin_print("Enabling audio channel...")
+                    conn.audio.switchAudioChannel(True)
+                else:
+                    _builtin_print("Warning: Audio channel not available on connection")
+
+                last_error = None
+                break  # Success, exit retry loop
+
+            except asyncio.TimeoutError as exc:
+                _builtin_print(f"ERROR: Connection timed out after 60s (attempt {attempt})")
+                last_error = exc
+            except (RuntimeError, AttributeError) as exc:
+                # Catch the specific error pattern
+                if "'NoneType' object has no attribute 'media'" in str(exc):
+                    _builtin_print(f"WARNING: Intermittent connection error (attempt {attempt}): stale connection detected")
+                    _builtin_print("         This usually means another connection is still active. Retrying...")
+                else:
+                    _builtin_print(f"ERROR: Connection failed (attempt {attempt}): {exc}")
+                last_error = exc
+            except Exception as exc:
+                _builtin_print(f"ERROR: Connection failed (attempt {attempt}): {exc}")
+                last_error = exc
+            finally:
+                if last_error is not None:
+                    # Disconnect and reset error flag for next attempt
+                    if conn:
+                        try:
+                            await asyncio.wait_for(conn.disconnect(), timeout=5.0)
+                        except Exception:
+                            pass
+                    connection_error_detected["value"] = False
+
+            if attempt < max_attempts and not _shutdown_requested:
+                _builtin_print("Retrying connection in 1 second...")
+                await asyncio.sleep(1.0)
+
+        if last_error is not None:
+            # Exhausted retries
+            _builtin_print(f"Failed to connect after {max_attempts} attempts. Retrying in 5 seconds...")
+            await asyncio.sleep(5.0)
+            continue
+
+        # Connection successful - run main loop
         try:
-            _builtin_print("Starting WebRTC connection...")
-
-            conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)
-
-            await asyncio.wait_for(conn.connect(), timeout=60.0)
-            _builtin_print("✓ Connection established!")
-
-            stats['connection_state'] = 'connected'
-            stats['start_time'] = time.time()
-
-            if getattr(conn, "audio", None):
-                conn.audio.add_track_callback(audio_track_handler)
-                _builtin_print("✓ Audio track handler registered")
-                _builtin_print("Enabling audio channel...")
-                conn.audio.switchAudioChannel(True)
-            else:
-                _builtin_print("Warning: Audio channel not available on connection")
 
             last_keepalive = time.time()
             while not _shutdown_requested:
                 current_time = time.time()
+
+                # Check for background task errors during operation
+                if connection_error_detected["value"]:
+                    _builtin_print("Background task error detected during operation - reconnecting...")
+                    break
 
                 if current_time - last_keepalive > 20.0:
                     try:
@@ -310,10 +432,6 @@ async def run_webrtc_connection():
                     await asyncio.wait_for(conn.disconnect(), timeout=5.0)
                 except Exception:
                     pass
-
-            if not _shutdown_requested:
-                _builtin_print("Retrying WebRTC connection in 5 seconds...")
-                await asyncio.sleep(5.0)
 
     _builtin_print("WebRTC connection thread exiting")
 

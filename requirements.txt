@@ -30,3 +30,6 @@ wasmtime
 # HTTP requests
 requests
 
+# TUI framework
+textual
+
