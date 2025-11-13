@@ -1,11 +1,17 @@
 """
 Script to attempt clearing faults on the Go2 robot.
 
+⚠️ WARNING: This script previously had a --reboot option that BRICKED a robot.
+   The reboot functionality has been COMPLETELY REMOVED.
+   DO NOT attempt to add it back - it uses undocumented APIs that can break the robot.
+
 This script tries several methods:
 1. RecoveryStand command (1006) - Attempts to recover from a fault state
 2. Damp command (1001) - Puts robot in safe/damped mode
 3. StandUp command (1004) - Attempts to stand up normally
-4. Soft reboot - Attempts to reboot the robot via BASH_REQ API
+
+NOTE: Soft reboot functionality was REMOVED after it bricked a robot.
+      Use physical power cycle only - NEVER use software reboot commands.
 
 IMPORTANT LIMITATIONS:
 - Software commands may only work for certain fault types (software faults, pose faults)
@@ -21,7 +27,7 @@ Note: Some faults may require a hard reset (power cycle) of the robot.
 
 Usage:
     python clear_fault.py              # Try all fault clearing methods
-    python clear_fault.py --reboot     # Only attempt soft reboot
+    # --reboot flag is DISABLED - do not use (causes connectivity issues)
 """
 
 import asyncio
@@ -303,67 +309,15 @@ async def clear_fault(conn, method="recovery"):
             await asyncio.sleep(8)
             
         elif method == "reboot":
-            print("\n⚠ ATTEMPTING SOFT REBOOT via BASH command...")
-            print("   WARNING: BASH_REQ API may be restricted/removed in firmware ≥1.1.2!")
-            print("   This interface comes from community reverse-engineering, not official docs.")
-            print("   This will disconnect the WebRTC connection!")
-            print("   The robot should reboot in ~30 seconds if successful.")
-            
-            try:
-                # Try to execute reboot command via bash runner with timeout
-                print("   Sending reboot command (format 1)...")
-                try:
-                    response = await asyncio.wait_for(
-                        conn.datachannel.pub_sub.publish_request_new(
-                            RTC_TOPIC["BASH_REQ"],
-                            {
-                                "api_id": 1001,  # Common API ID for execute command
-                                "parameter": {"command": "sudo reboot"}
-                            }
-                        ),
-                        timeout=5.0
-                    )
-                    print(f"   Response: {response}")
-                    print("\n✓ Reboot command sent. Robot should restart in ~30 seconds.")
-                    print("   Wait 30-60 seconds, then reconnect to verify.")
-                    return True
-                except asyncio.TimeoutError:
-                    print("   Timeout waiting for response (format 1).")
-                    print("   Command may have been sent but robot is rebooting...")
-                    return True  # Assume success if timeout (robot might be rebooting)
-                except Exception as e:
-                    print(f"   Format 1 failed: {e}")
-                    # Try alternative format
-                    print("   Trying alternative format...")
-                    try:
-                        response = await asyncio.wait_for(
-                            conn.datachannel.pub_sub.publish_request_new(
-                                RTC_TOPIC["BASH_REQ"],
-                                {
-                                    "command": "sudo reboot"
-                                }
-                            ),
-                            timeout=5.0
-                        )
-                        print(f"   Response: {response}")
-                        print("\n✓ Reboot command sent (alternative format).")
-                        return True
-                    except asyncio.TimeoutError:
-                        print("   Timeout waiting for response (format 2).")
-                        print("   Command may have been sent but robot is rebooting...")
-                        return True
-                    except Exception as e2:
-                        print(f"   Format 2 also failed: {e2}")
-                        raise
-            except Exception as e:
-                print(f"\n✗ Failed to send reboot command: {e}")
-                print("   Note: BASH_REQ API may not be available in your firmware version.")
-                print("   Newer firmware versions may have restricted or removed this interface.")
-                print("   Alternative methods:")
-                print("     1. Use SSH: ssh unitree@192.168.12.1 (password: 123)")
-                print("        Then run: sudo reboot")
-                print("     2. Physical power cycle: Remove battery, wait 10-15 min, reinsert")
-                return False
+            print("\n⚠ REBOOT FUNCTIONALITY DISABLED")
+            print("   This feature has been disabled due to connectivity issues.")
+            print("   The BASH_REQ reboot command may have caused connection problems.")
+            print("\n   If you need to reboot the robot:")
+            print("     1. Physical power cycle: Remove battery, wait 10-15 min, reinsert")
+            print("     2. Use SSH (if accessible): ssh unitree@192.168.12.1")
+            print("        Then run: sudo reboot")
+            print("\n   DO NOT use the software reboot - it may break connectivity.")
+            return False
         
         # Check errors after
         print("\nChecking errors after command...")
@@ -398,8 +352,9 @@ async def clear_fault(conn, method="recovery"):
 async def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='Go2 Fault Clearing Utility')
-    parser.add_argument('--reboot', action='store_true', 
-                       help='Only attempt soft reboot (will disconnect)')
+    # Reboot functionality REMOVED - it bricked a robot
+    # parser.add_argument('--reboot', action='store_true', 
+    #                    help='Only attempt soft reboot (will disconnect)')
     args = parser.parse_args()
     
     print("="*60)
@@ -452,28 +407,8 @@ async def main():
         print("\n✗ Could not establish connection")
         return
     
-    # If reboot-only mode, do that and exit
-    if args.reboot:
-        print("\n" + "="*60)
-        print("SOFT REBOOT MODE")
-        print("="*60)
-        success = await clear_fault(conn, method="reboot")
-        if success:
-            print("\n✓ Reboot command sent successfully!")
-            print("   The robot should reboot in ~30 seconds.")
-            print("   Wait 30-60 seconds before attempting to reconnect.")
-        else:
-            print("\n✗ Reboot command failed.")
-            print("   Alternative: Use SSH: ssh unitree@192.168.12.1")
-            print("   Then run: sudo reboot")
-        
-        # Don't try to disconnect - connection will be lost anyway
-        print("\nDisconnecting (connection will be lost during reboot)...")
-        try:
-            await asyncio.wait_for(conn.disconnect(), timeout=2.0)
-        except:
-            pass
-        return
+    # Reboot functionality completely removed - do not attempt
+    # This was causing robots to become bricked/unresponsive
     
     # Try different fault clearing methods
     # Note: "reboot" will disconnect, so it should be last or used separately
